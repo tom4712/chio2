@@ -1,4 +1,5 @@
 ﻿using ProtoBuf;
+using Quasar.Common.Cryptography;
 using Quasar.Common.Messages;
 using System;
 using System.IO;
@@ -8,12 +9,14 @@ namespace Quasar.Common.Networking
     public class PayloadReader : MemoryStream
     {
         private readonly Stream _innerStream;
+        private readonly Aes256 _aes;
         public bool LeaveInnerStreamOpen { get; }
 
-        public PayloadReader(byte[] payload, int length, bool leaveInnerStreamOpen)
+        public PayloadReader(Stream stream, bool leaveInnerStreamOpen, string encryptionKey)
         {
-            _innerStream = new MemoryStream(payload, 0, length, false, true);
+            _innerStream = stream;
             LeaveInnerStreamOpen = leaveInnerStreamOpen;
+            _aes = new Aes256(encryptionKey);
         }
 
         public PayloadReader(Stream stream, bool leaveInnerStreamOpen)
@@ -44,8 +47,17 @@ namespace Quasar.Common.Networking
         /// <returns>The deserialized message of the payload.</returns>
         public IMessage ReadMessage()
         {
-            // 엔진에서 이미 패딩을 처리했으므로, 여기서는 바로 역직렬화만 합니다.
-            return Serializer.Deserialize<IMessage>(_innerStream);
+            // 스트림의 현재 위치부터 남은 데이터를 모두 읽음 (암호화된 본문)
+            byte[] encryptedData = new byte[_innerStream.Length - _innerStream.Position];
+            _innerStream.Read(encryptedData, 0, encryptedData.Length);
+
+            // [핵심] 복호화 수행
+            byte[] decryptedPayload = _aes.Decrypt(encryptedData);
+
+            using (MemoryStream ms = new MemoryStream(decryptedPayload))
+            {
+                return Serializer.Deserialize<IMessage>(ms);
+            }
         }
 
         protected override void Dispose(bool disposing)

