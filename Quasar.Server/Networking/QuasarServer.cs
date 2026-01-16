@@ -97,31 +97,44 @@ namespace Quasar.Server.Networking
         /// <param name="message">The received message.</param>
         private void OnClientRead(Server server, Client client, IMessage message)
         {
-            if (!client.Identified)
+            try
             {
-                if (message.GetType() == typeof (ClientIdentification))
+                if (!client.Identified)
                 {
-                    client.Identified = IdentifyClient(client, (ClientIdentification) message);
-                    if (client.Identified)
+                    if (message.GetType() == typeof(ClientIdentification))
                     {
-                        client.Send(new ClientIdentificationResult {Result = true}); // finish handshake
-                        OnClientConnected(client);
+                        client.Identified = IdentifyClient(client, (ClientIdentification)message);
+                        if (client.Identified)
+                        {
+                            client.Send(new ClientIdentificationResult { Result = true }); // finish handshake
+                            OnClientConnected(client);
+                        }
+                        else
+                        {
+                            // identification failed
+                            client.Disconnect();
+                        }
                     }
                     else
                     {
-                        // identification failed
+                        // no messages of other types are allowed as long as client is in unidentified state
                         client.Disconnect();
                     }
+                    return;
                 }
-                else
-                {
-                    // no messages of other types are allowed as long as client is in unidentified state
-                    client.Disconnect();
-                }
-                return;
-            }
 
-            MessageHandler.Process(client, message);
+                MessageHandler.Process(client, message);
+            }
+            catch (Exception ex)
+            {
+                // [연구 진단] 에러 발생 시 즉시 메시지 박스 출력
+                System.Windows.Forms.MessageBox.Show(
+                    $"[수신 데이터 처리 에러]\n대상: {client.EndPoint}\n메시지: {ex.Message}\n스택: {ex.StackTrace}",
+                    "디버깅 알림",
+                    System.Windows.Forms.MessageBoxButtons.OK,
+                    System.Windows.Forms.MessageBoxIcon.Error);
+            }
+            
         }
 
         private bool IdentifyClient(Client client, ClientIdentification packet)

